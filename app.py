@@ -1,11 +1,11 @@
 # app.py
-# Minimal UI: trains models (matching your notebook) on load, then lets user input 3 features to predict churn.
+# Minimal UI: trains models on cleaned dataset, then lets user input 3 features to predict churn.
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 import os
-from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.tree import DecisionTreeClassifier
@@ -16,9 +16,9 @@ from sklearn.metrics import precision_score
 st.set_page_config(page_title="Churn quick-predict", layout="centered")
 st.title("Churn quick-predict")
 
-# Features and dataset
+# --- Config ---
 FEATURES = ['tenure', 'MonthlyCharges', 'TotalCharges']
-DATA_FILE = "Telco.csv"
+DATA_FILE = "Telco.csv"   # ✅ use cleaned dataset
 
 # --- Load dataset ---
 if not os.path.exists(DATA_FILE):
@@ -30,26 +30,7 @@ if not os.path.exists(DATA_FILE):
 
 df = pd.read_csv(DATA_FILE)
 
-# --- Minimal cleaning (as in notebook) ---
-def clean_df(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    if 'customerID' in df.columns:
-        df = df.drop(columns=['customerID'])
-    if 'TotalCharges' in df.columns:
-        df['TotalCharges'] = pd.to_numeric(df['TotalCharges'], errors='coerce')
-        df['TotalCharges'] = df['TotalCharges'].fillna(df['TotalCharges'].median())
-    if 'Churn' in df.columns and df['Churn'].dtype == object:
-        df['Churn'] = df['Churn'].map({'Yes': 1, 'No': 0}).fillna(df['Churn'])
-    for c in FEATURES:
-        if c in df.columns:
-            df[c] = pd.to_numeric(df[c], errors='coerce')
-            if df[c].isna().any():
-                df[c] = df[c].fillna(df[c].median())
-    return df
-
-df = clean_df(df)
-
-# --- Check required columns ---
+# --- Verify required columns ---
 missing_cols = [c for c in FEATURES + ['Churn'] if c not in df.columns]
 if missing_cols:
     st.error(f"Training CSV missing columns: {missing_cols}")
@@ -61,10 +42,12 @@ y = df['Churn'].astype(int)
 # Train/test split (same as notebook)
 test_size = 0.2
 split_seed = 42
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=split_seed, stratify=y)
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=test_size, random_state=split_seed, stratify=y
+)
 
-# --- Train models (matching notebook hyperparameters) ---
-@st.cache_data(show_spinner=False)
+# --- Train models ---
+@st.cache_resource(show_spinner=False)
 def train_all_models(X_train, y_train, X_full, y_full):
     models = {}
     scalers = {}
@@ -108,18 +91,13 @@ def train_all_models(X_train, y_train, X_full, y_full):
     models['KNN'] = knn_final
     scalers['KNN'] = scaler_knn
 
-    # SVM
+    # SVM (fixed best params)
     scaler_svm = StandardScaler()
     X_scaled = scaler_svm.fit_transform(X_full)
     Xs_train, Xs_test, ys_train, ys_test = train_test_split(
-        X_scaled, y_full, test_size=test_size, random_state=split_seed, stratify=y_full
+        X_scaled, y_full, test_size=0.2, random_state=42, stratify=y_full
     )
-    param_grid = {'C': [0.1, 1, 10, 100], 'gamma': ['scale', 0.01, 0.1, 1]}
-    base_svc = SVC(kernel='rbf', probability=True, random_state=50)
-    grid = GridSearchCV(estimator=base_svc, param_grid=param_grid, scoring='accuracy', cv=5, n_jobs=-1, verbose=0)
-    grid.fit(Xs_train, ys_train)
-    best_params = grid.best_params_
-    svm_final = SVC(kernel='rbf', C=best_params['C'], gamma=best_params['gamma'], probability=True, random_state=50)
+    svm_final = SVC(kernel='rbf', C=100, gamma=1, probability=True, random_state=50)
     svm_final.fit(Xs_train, ys_train)
     models['SVM'] = svm_final
     scalers['SVM'] = scaler_svm
@@ -132,11 +110,17 @@ models, scalers, knn_k = train_all_models(X_train, y_train, X, y)
 st.header("Enter customer features")
 col1, col2, col3 = st.columns(3)
 with col1:
-    tenure_val = st.number_input("tenure (months)", value=float(X['tenure'].median()), min_value=0.0, step=1.0, format="%.0f")
+    tenure_val = st.number_input(
+        "tenure (months)", value=float(X['tenure'].median()), min_value=0.0, step=1.0, format="%.0f"
+    )
 with col2:
-    monthly_val = st.number_input("MonthlyCharges", value=float(X['MonthlyCharges'].median()), min_value=0.0, step=0.1)
+    monthly_val = st.number_input(
+        "MonthlyCharges", value=float(X['MonthlyCharges'].median()), min_value=0.0, step=0.1
+    )
 with col3:
-    total_val = st.number_input("TotalCharges", value=float(X['TotalCharges'].median()), min_value=0.0, step=0.1)
+    total_val = st.number_input(
+        "TotalCharges", value=float(X['TotalCharges'].median()), min_value=0.0, step=0.1
+    )
 
 model_select = st.selectbox("Choose model to predict with", ["RandomForest", "DecisionTree", "KNN", "SVM"])
 
