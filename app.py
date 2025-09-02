@@ -1,6 +1,5 @@
 # app.py
 # Minimal UI: trains models (matching your notebook) on load, then lets user input 3 features to predict churn.
-# No debug or metric panels — only input -> model selection -> prediction.
 
 import streamlit as st
 import pandas as pd
@@ -17,30 +16,21 @@ from sklearn.metrics import precision_score
 st.set_page_config(page_title="Churn quick-predict", layout="centered")
 st.title("Churn quick-predict")
 
-# Features and candidate training filenames
+# Features and dataset
 FEATURES = ['tenure', 'MonthlyCharges', 'TotalCharges']
-CANDIDATES = ["telco2.csv", "Telco.csv", "telco.csv", "data/Telco.csv", "data/telco.csv"]
+DATA_FILE = "Telco.csv"
 
-# Load CSV
-train_df = None
-train_path = None
-for p in CANDIDATES:
-    if os.path.exists(p):
-        try:
-            train_df = pd.read_csv(p)
-            train_path = p
-            break
-        except Exception:
-            train_df = None
-
-if train_df is None:
+# --- Load dataset ---
+if not os.path.exists(DATA_FILE):
     st.error(
-        "No training CSV found in the repository root. Add your cleaned CSV named `telco2.csv` or `Telco.csv` "
-        "containing columns: `tenure`, `MonthlyCharges`, `TotalCharges`, and `Churn`."
+        f"Training CSV `{DATA_FILE}` not found in the repository root. "
+        "Please add it with columns: tenure, MonthlyCharges, TotalCharges, and Churn."
     )
     st.stop()
 
-# Minimal cleaning (matching notebook)
+df = pd.read_csv(DATA_FILE)
+
+# --- Minimal cleaning (as in notebook) ---
 def clean_df(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     if 'customerID' in df.columns:
@@ -57,7 +47,9 @@ def clean_df(df: pd.DataFrame) -> pd.DataFrame:
                 df[c] = df[c].fillna(df[c].median())
     return df
 
-df = clean_df(train_df)
+df = clean_df(df)
+
+# --- Check required columns ---
 missing_cols = [c for c in FEATURES + ['Churn'] if c not in df.columns]
 if missing_cols:
     st.error(f"Training CSV missing columns: {missing_cols}")
@@ -71,13 +63,13 @@ test_size = 0.2
 split_seed = 42
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=split_seed, stratify=y)
 
-# Train models (matching your notebook hyperparameters)
+# --- Train models (matching notebook hyperparameters) ---
 @st.cache_data(show_spinner=False)
-def train_all_models(X_train, y_train, X_train_full, y_full):
+def train_all_models(X_train, y_train, X_full, y_full):
     models = {}
     scalers = {}
 
-    # RandomForest (notebook params)
+    # RandomForest
     rf = RandomForestClassifier(
         n_estimators=500,
         oob_score=True,
@@ -89,7 +81,7 @@ def train_all_models(X_train, y_train, X_train_full, y_full):
     rf.fit(X_train, y_train)
     models['RandomForest'] = rf
 
-    # Decision Tree (notebook params)
+    # Decision Tree
     dt = DecisionTreeClassifier(
         criterion="entropy",
         max_depth=5,
@@ -100,16 +92,14 @@ def train_all_models(X_train, y_train, X_train_full, y_full):
     dt.fit(X_train, y_train)
     models['DecisionTree'] = dt
 
-    # KNN: scale on train, search k=1..20 by precision on test-like split
+    # KNN
     scaler_knn = StandardScaler()
     X_train_scaled = scaler_knn.fit_transform(X_train)
-    # find best k by precision (use simple approach like notebook)
     k_values = list(range(1, 21))
     precision_scores = []
     for k in k_values:
         knn_tmp = KNeighborsClassifier(n_neighbors=k)
         knn_tmp.fit(X_train_scaled, y_train)
-        # for search we compare on provided X_train_scaled (consistent with notebook behavior)
         preds_tmp = knn_tmp.predict(X_train_scaled)
         precision_scores.append(precision_score(y_train, preds_tmp, zero_division=0))
     best_k = k_values[int(np.argmax(precision_scores))]
@@ -118,11 +108,12 @@ def train_all_models(X_train, y_train, X_train_full, y_full):
     models['KNN'] = knn_final
     scalers['KNN'] = scaler_knn
 
-    # SVM: scale on full features, grid search with cv=5
+    # SVM
     scaler_svm = StandardScaler()
-    X_full_scaled = scaler_svm.fit_transform(X_train_full)  # note: notebook did scale before splitting for SVM
-    # split scaled for gridsearch
-    Xs_train, Xs_test, ys_train, ys_test = train_test_split(X_full_scaled, y_full, test_size=test_size, random_state=split_seed, stratify=y_full)
+    X_scaled = scaler_svm.fit_transform(X_full)
+    Xs_train, Xs_test, ys_train, ys_test = train_test_split(
+        X_scaled, y_full, test_size=test_size, random_state=split_seed, stratify=y_full
+    )
     param_grid = {'C': [0.1, 1, 10, 100], 'gamma': ['scale', 0.01, 0.1, 1]}
     base_svc = SVC(kernel='rbf', probability=True, random_state=50)
     grid = GridSearchCV(estimator=base_svc, param_grid=param_grid, scoring='accuracy', cv=5, n_jobs=-1, verbose=0)
@@ -135,15 +126,9 @@ def train_all_models(X_train, y_train, X_train_full, y_full):
 
     return models, scalers, best_k
 
-# Use training data: Note SVM uses scaling on full X (to match notebook)
 models, scalers, knn_k = train_all_models(X_train, y_train, X, y)
 
-# Save into session state for prediction use
-st.session_state['models'] = models
-st.session_state['scalers'] = scalers
-st.session_state['knn_k'] = knn_k
-
-# --- Single prediction UI ---
+# --- UI for single prediction ---
 st.header("Enter customer features")
 col1, col2, col3 = st.columns(3)
 with col1:
@@ -154,15 +139,15 @@ with col3:
     total_val = st.number_input("TotalCharges", value=float(X['TotalCharges'].median()), min_value=0.0, step=0.1)
 
 model_select = st.selectbox("Choose model to predict with", ["RandomForest", "DecisionTree", "KNN", "SVM"])
+
 if st.button("Predict"):
     sample = pd.DataFrame([[tenure_val, monthly_val, total_val]], columns=FEATURES)
-    for c in sample.columns:
-        sample[c] = pd.to_numeric(sample[c], errors='coerce').fillna(X[c].median())
 
-    chosen = st.session_state['models'].get(model_select)
+    chosen = models[model_select]
     proba = None
+
     if model_select == 'KNN':
-        scaler = st.session_state['scalers']['KNN']
+        scaler = scalers['KNN']
         sample_t = scaler.transform(sample)
         pred = chosen.predict(sample_t)[0]
         try:
@@ -170,8 +155,8 @@ if st.button("Predict"):
         except Exception:
             proba = None
     elif model_select == 'SVM':
-        scaler = st.session_state['scalers']['SVM']
-        sample_t = scaler.transform(sample)  # SVM scaler fit on full X
+        scaler = scalers['SVM']
+        sample_t = scaler.transform(sample)
         pred = chosen.predict(sample_t)[0]
         proba = chosen.predict_proba(sample_t)[0][1]
     else:
@@ -185,5 +170,6 @@ if st.button("Predict"):
         st.markdown("## 🔴 Predicted: Likely to churn")
     else:
         st.markdown("## 🟢 Predicted: Unlikely to churn")
+
     if proba is not None:
         st.write(f"Predicted probability of churn: **{proba:.3f}**")
