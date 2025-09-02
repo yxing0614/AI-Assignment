@@ -16,9 +16,8 @@ from sklearn.metrics import precision_score
 st.set_page_config(page_title="Churn quick-predict", layout="centered")
 st.title("Churn quick-predict")
 
-# --- Config ---
 FEATURES = ['tenure', 'MonthlyCharges', 'TotalCharges']
-DATA_FILE = "Telco.csv"   # ✅ use cleaned dataset
+DATA_FILE = "Telco.csv"
 
 # --- Load dataset ---
 if not os.path.exists(DATA_FILE):
@@ -30,7 +29,6 @@ if not os.path.exists(DATA_FILE):
 
 df = pd.read_csv(DATA_FILE)
 
-# --- Verify required columns ---
 missing_cols = [c for c in FEATURES + ['Churn'] if c not in df.columns]
 if missing_cols:
     st.error(f"Training CSV missing columns: {missing_cols}")
@@ -39,7 +37,6 @@ if missing_cols:
 X = df[FEATURES].copy()
 y = df['Churn'].astype(int)
 
-# Train/test split (same as notebook)
 test_size = 0.2
 split_seed = 42
 X_train, X_test, y_train, y_test = train_test_split(
@@ -106,7 +103,7 @@ def train_all_models(X_train, y_train, X_full, y_full):
 
 models, scalers, knn_k = train_all_models(X_train, y_train, X, y)
 
-# --- UI for single prediction ---
+#UI
 st.header("Enter customer features")
 col1, col2, col3 = st.columns(3)
 with col1:
@@ -151,9 +148,9 @@ if st.button("Predict"):
             proba = None
 
     if pred == 1:
-        st.markdown("## 🔴 Predicted: Likely to churn")
+        st.markdown("## 🔴Likely to churn")
     else:
-        st.markdown("## 🟢 Predicted: Unlikely to churn")
+        st.markdown("## 🟢Unlikely to churn")
 
     if proba is not None:
-        st.write(f"Predicted probability of churn: **{proba:.3f}**")
+        st.write(f"Predicted probability of churn: **{proba:.4f}**")
